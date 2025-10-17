@@ -315,4 +315,186 @@ sum_to = function(key, al, result=0)
 
 echo("sum_to duck", sum_to("duck", num_legs2));
 
-// Interesting post: https://stackoverflow.com/a/79620666
+echo("---- TYPES AND OO STUFF -----");
+// If you look at how our homebrew pairs and lists behave, they look a lot
+// like datatypes (because they are!).
+// We used functions as containers for data. In fact, we can do so arbitrarily:
+some_complex_number = function(r, i) function(get_what) get_what == "real" ? r : i;
+fiveplusfouri = some_complex_number(5, 4);
+echo("real part", fiveplusfouri("real"));
+echo("imaginary part", fiveplusfouri("imaginary"));
+
+// We already used this pattern of "our original function returns a dispatcher function" above.
+// We can also use the dispatching to return functions instead of values.
+// But using strings is ugly, so let's first define some symbols:
+p_real = 0;
+p_img = 1;
+m_add = 2;
+m_sub = 3;
+m_str = function(c) c(m_str);  // optional syntactic sugar for e.g. m_str(c1) instead of c1(m_str). But actually I prefer it the other way round (c1(m_str)), so we can chain commands in a more natural order later.
+Complex = function(r, i) function(member)
+      member == p_real ? r
+    : member == p_img ? i
+    : member == m_add ? function(c2) Complex(r+c2(p_real), i+c2(p_img))
+    : member == m_sub ? function(c2) Complex(r-c2(p_real), i-c2(p_img))
+    : member == m_str ? str(r, i > 0 ? "+" : "", i, "i")
+    : assert(false, str("ERROR: UNKNOWN MEMBER ", member));
+
+// Unfortunately, OpenSCAD does not support dot syntax. But the next best thing is parameter
+// syntax, i.e. we provide the symbol for the method/property we want in parentheses:
+//  c1(p_real) is equivalent to c1.p_real in a typical language
+// In the case of methods, we then get the method and can call on arguments using another set of
+// parentheses:
+//  c1(m_add)(c2) == c1.add(c2) in another language
+// Not extremely pretty, but much better than a bunch of nested parentheses!
+
+c1 = Complex(3, 4);
+c2 = Complex(2, 6);
+echo("c1", c1(m_str));
+echo("c1-c2", c1(m_sub)(c2)(m_str)); // equivalent to c1.m_sub(c2).m_str (method chaining)
+echo("c1+c2", c1(m_add)(c2)(m_str));
+// creating an error:
+//echo(c1("hello"));
+
+// This even supports inheritance - simply add/override what is needed and forward the rest to "super".
+// We also add a "this" reference while we're at it (we assign our dispatching function to a
+// local variable "this" so we can refer to it in our code, and then we return "this").
+m_mult = 4;
+Cplx2 = function(r, i)
+  let (super = Complex(r, i), this = function(member)
+      member == m_str ? str("Cplx2(", r, ", ", i, ")")
+    : member == m_mult ? function(c2) Cplx2(r*c2(p_real)-i*c2(p_img), r*c2(p_img)+i*c2(p_real))
+    : member == "thistestfoo" ? str(this(m_str), " thinks therefore it is.")
+    : super(member)
+   ) this;
+
+c3 = Cplx2(3, 4);
+c4 = Cplx2(2, 6);
+echo("c3 (overridden)", c3(m_str));
+echo("c3-c4 (inherited)", c3(m_sub)(c4)(m_str)); // equivalent to c1.m_sub(c2).m_str (method chaining)
+echo("c3+c4 (inherited)", c3(m_add)(c4)(m_str));
+echo("c3*c4 (new)", c3(m_mult)(c4)(m_str));
+echo("c3(thistest) (new)", c3("thistestfoo"));
+
+// All in all, this is actually surprisingly close to standard OO stuff. We even
+// have a constructor (the outer function) which behaves exactly as a constructor should, and "this".
+// We have chainable property/method selection and calls, no limit on parameter type or shape
+// (no currying requirement), so this is not functional programming in disguise, but real
+// object-oriented programming, with all the uglyness such as inheritance, that you should avoid. ;)
+
+// There's one thing that we don't have, and that is mutable state.
+// OpenSCAD does not offer mutable variables, which makes this kind of hard.
+// In many cases, this is a non-issue, as any modifying method can simply return the
+// modified object (which is in reality a new object, but in 90% of the cases, you won't
+// care about the difference (unless you are addicted to hidden state changes, which would be worrying).
+m_set_r = 5;
+m_set_i = 6;
+Cplx3 = function(r, i)
+  let (super = Cplx2(r, i), this = function(member)
+      member == m_set_r ? function(new_r) Cplx3(new_r, i)
+    : member == m_set_i ? function(new_i) Cplx3(r, new_i)
+    : super(member)
+   ) this;
+
+c5 = Cplx3(1,2);
+echo("c5", c5(m_str));
+c6 = c5(m_set_r)(42);
+echo("c6", c6(m_str));
+
+// But, alas, OpenSCAD does not allow different values for the same symbol.
+// Except.... in loops (the incrementer) and recursion...
+// So we COULD actually try to simulate mutability by using openscad's internal management
+// of recusion to push our (changed or not) variable environment (or "stack frames") onto.
+// Hmmmm...
+// Maybe another time.
+
+
+echo("---- MONAD STUFF -----");
+// Drink a relaxing cup of tea while reading
+// https://www.adit.io/posts/2013-04-17-functors,_applicatives,_and_monads_in_pictures.html
+// and/or watching
+// https://egghead.io/courses/professor-frisby-introduces-composable-functional-javascript
+
+m_map = function(x) x(m_map);  // map/fmap/<$> (-> functor)
+m_fold = function(x) x(m_fold);  // fold/reduce (-> functor)
+m_bind = function(x) x(m_bind);  // bind/chain/>>=/flatMap/liftM (-> monad)
+m_apply = function(x) x(m_apply);  // ap/<*>/liftA (-> applicative functor), requires currying or liftA tweaks to be effective
+// not shown: of/unit/return/liftM (wrapping something in a monad is done through the constructor)
+// BTW: bind + of = map
+m_from_nullable = function(x) x(m_from_nullable);
+m_from_num = function(x) x(m_from_num);
+Maybe = function(val) function(member)  // todo: needed/useful at all?
+      member == m_from_nullable ? function(x)  // something like a class method
+                                     is_undef(x) ? Problem(x) : Result(x)
+    : member == m_from_num ? function(x)
+                                  is_undef(x) ? Problem(x)
+                                : !is_num(x) ? Problem(str("Not a number: ", x))
+                                : x == 1/0 ? Problem(x)
+                                : x == -1/0 ? Problem(x)
+                                : Result(x)
+    : assert(false, "UNKNOWN MEMBER");
+Result = function(val) let(super=Maybe(val)) function(member)
+      member == m_map ? function(f) Result(f(val))  // wraps whatever value a function returns
+    : member == m_fold ? function(resf, errf) resf(val)  // unwraps the value
+    : member == m_bind ? function(f) f(val)  // returns whatever wrapped value a "monad maker" function returns
+    : member == m_apply ? function(other) other.map(val)  // applies the function "val" to another Maybe
+    : member == m_str ? str("Result(", val, ")")
+    : super(member);
+Problem = function(val) let(super=Maybe(val)) function(member)
+      member == m_map ? function(f) Problem(val)
+    : member == m_fold ? function(resf, errf) errf(val)
+    : member == m_bind ? function(f) Problem(val)
+    : member == m_apply ? function(other) Problem(val)
+    : member == m_str ? str("Problem(", val, ")")
+    : super(member);
+
+echo(Result(3)(m_map)(function(x) x*2)
+              (m_map)(function(x) x+7)
+              (m_fold)(function(x) x, function(x) str("uh-oh: ", x)));
+
+echo(Maybe()(m_from_num)(3)(m_str));
+echo(Maybe()(m_from_num)(1/0)(m_str));
+echo(Maybe()(m_from_num)(-1/0)(m_str));
+echo(Maybe()(m_from_num)(undef)(m_str));
+echo(Maybe()(m_from_num)("hello")(m_str));
+echo(Maybe()(m_from_nullable)("hello")(m_str));
+echo(Maybe()(m_from_nullable)(undef)(m_str));
+
+// Maybe is a Functor if it satisfies two laws:
+// 1. Preserve identity morphisms:
+//    fx.map(id) == id(fx), where id = x => x
+id = function(x) x;
+echo("functor_neutral1", Result(3)(m_map)(id)(m_str));
+echo("functor_neutral2", id(Result(3))(m_str));
+
+// 2. Preserve composition of morphisms:
+//    fx.map(f).map(g) == fx.map(x => g(f(x)))
+plusthree = function(x) x+3;
+timestwo = function(x) x*2;
+functor_mapped = Result(2)(m_map)(plusthree)(m_map)(timestwo)(m_str);
+functor_composed = Result(2)(m_map)(function(x) timestwo(plusthree(x)))(m_str);
+echo("functor_mapped", functor_mapped);
+echo("functor_composed", functor_composed);
+echo("equal?", functor_mapped == functor_composed);
+
+// Maybe is a Monad if it satisfies two more laws:
+// 1. Left and right identity:
+echo("monad left identity", Result(7)(m_bind)(plusthree));
+echo("should equal", plusthree(7));
+echo("monad right identity", Result(7)(m_bind)(Result)(m_str));
+echo("should equal", Result(7)(m_str));
+
+// 2. Associativity
+f = function(x) Result(x+3);
+g = function(x) Result(x*2);
+echo("monad associativity left", Result(7)(m_bind)(f)(m_bind)(g)(m_str));
+echo("monad associativity right", Result(7)(m_bind)(function(x) f(x)(m_bind)(g))(m_str));
+
+
+// WIP: chaining binds with do notation
+// (not really needed because of our nice method chaining)
+do2 = function(m, f1, f2) m(m_map)(f1)(m_map)(f2);
+echo("do2", do2(Result(2), timestwo, plusthree)(m_str));
+
+do = function(m, f_vector) m(m_map)(reduce(compose, id, f_vector));
+echo("do", do(Result(2), [plusthree, timestwo, inc])(m_str));
